@@ -1,0 +1,617 @@
+---
+import { url } from "@/utils/url-utils";
+
+interface Props {
+  src: string;
+  poster?: string;
+  alt?: string;
+  maxWidth?: number;
+  aspectRatio?: string;
+  rounded?: number;
+  autoplay?: boolean;
+  loop?: boolean;
+  showLoopBadge?: boolean;
+}
+
+const {
+  src,
+  poster,
+  alt = "循环视频",
+  maxWidth = 860,
+  aspectRatio = "71 / 40",
+  rounded = 18,
+  autoplay = true,
+  loop = true,
+  showLoopBadge = true,
+} = Astro.props;
+
+const resolveAsset = (value?: string) => {
+  if (!value) return undefined;
+  if (/^(https?:)?\/\//i.test(value) || value.startsWith("data:")) return value;
+  return url(value);
+};
+
+const videoSrc = resolveAsset(src);
+const posterSrc = resolveAsset(poster);
+---
+
+<figure
+  class="ambient-loop-video"
+  data-loop-video
+  style={`--video-max-width:${maxWidth}px;--video-radius:${rounded}px;--video-ratio:${aspectRatio};`}
+>
+  <button
+    class="ambient-loop-video__surface"
+    type="button"
+    aria-label="暂停视频"
+    aria-pressed="false"
+    title="点击暂停 / 继续播放"
+  >
+    <span class="ambient-loop-video__glass" aria-hidden="true"></span>
+    <span class="ambient-loop-video__corner ambient-loop-video__corner--tl" aria-hidden="true"></span>
+    <span class="ambient-loop-video__corner ambient-loop-video__corner--br" aria-hidden="true"></span>
+
+    <video
+      class="ambient-loop-video__media"
+      src={videoSrc}
+      poster={posterSrc}
+      autoplay={autoplay}
+      loop={loop}
+      muted
+      playsinline
+      preload="metadata"
+      disablepictureinpicture
+      controlslist="nodownload noplaybackrate nofullscreen"
+      aria-label={alt}
+    ></video>
+
+    <span class="ambient-loop-video__sheen" aria-hidden="true"></span>
+
+    {showLoopBadge && (
+      <span class="ambient-loop-video__badge" aria-hidden="true">
+        <i></i>
+        <span>LOOP</span>
+        <b>∞</b>
+      </span>
+    )}
+
+    <span class="ambient-loop-video__state" aria-hidden="true">
+      <span class="ambient-loop-video__state-icon"></span>
+      <span class="ambient-loop-video__state-text">PAUSED</span>
+    </span>
+
+    <span class="ambient-loop-video__hint" aria-hidden="true">CLICK TO PAUSE</span>
+  </button>
+</figure>
+
+<script>
+  function initAmbientLoopVideos() {
+    const roots = document.querySelectorAll("[data-loop-video]:not([data-ready='1'])");
+
+    roots.forEach((root) => {
+      root.setAttribute("data-ready", "1");
+
+      const surface = root.querySelector(".ambient-loop-video__surface");
+      const video = root.querySelector("video");
+      if (!(surface instanceof HTMLButtonElement) || !(video instanceof HTMLVideoElement)) return;
+
+      let userPaused = false;
+      let visibilityPaused = false;
+      let feedbackTimer = 0;
+
+      const sync = (showFeedback = false) => {
+        const paused = video.paused;
+        root.classList.toggle("is-paused", paused);
+        surface.setAttribute("aria-pressed", String(paused));
+        surface.setAttribute("aria-label", paused ? "继续播放视频" : "暂停视频");
+
+        const stateText = root.querySelector(".ambient-loop-video__state-text");
+        if (stateText) stateText.textContent = paused ? "PAUSED" : "PLAY";
+
+        if (showFeedback) {
+          root.classList.remove("show-state");
+          void root.clientWidth;
+          root.classList.add("show-state");
+          window.clearTimeout(feedbackTimer);
+          feedbackTimer = window.setTimeout(() => root.classList.remove("show-state"), 720);
+        }
+      };
+
+      const togglePlayback = async () => {
+        if (video.paused) {
+          userPaused = false;
+          visibilityPaused = false;
+          try {
+            await video.play();
+          } catch {
+            userPaused = true;
+          }
+        } else {
+          userPaused = true;
+          video.pause();
+        }
+        sync(true);
+      };
+
+      surface.addEventListener("click", (event) => {
+        const rect = surface.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        surface.style.setProperty("--tap-x", `${x}px`);
+        surface.style.setProperty("--tap-y", `${y}px`);
+        root.classList.remove("tap-flash");
+        void root.clientWidth;
+        root.classList.add("tap-flash");
+        window.setTimeout(() => root.classList.remove("tap-flash"), 520);
+        void togglePlayback();
+      });
+
+      video.addEventListener("play", () => sync());
+      video.addEventListener("pause", () => sync());
+
+      // 浏览器通常只允许“静音自动播放”。这里强制保持静音，避免自动播放被拦截。
+      video.muted = true;
+      video.defaultMuted = true;
+
+      if (video.autoplay) {
+        video.play().catch(() => {
+          userPaused = true;
+          sync();
+        });
+      }
+
+      // 离开视口时临时暂停，回到视口后仅在用户没有手动暂停时恢复。
+      if ("IntersectionObserver" in window) {
+        const observer = new IntersectionObserver(
+          (entries) => {
+            const entry = entries[0];
+            if (!entry) return;
+
+            if (entry.intersectionRatio < 0.12 && !video.paused) {
+              visibilityPaused = true;
+              video.pause();
+              sync();
+            } else if (
+              entry.intersectionRatio >= 0.12 &&
+              visibilityPaused &&
+              !userPaused
+            ) {
+              visibilityPaused = false;
+              video.play().then(() => sync()).catch(() => {});
+            }
+          },
+          { threshold: [0, 0.12, 0.5] },
+        );
+        observer.observe(root);
+      }
+
+      sync();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initAmbientLoopVideos, { once: true });
+  } else {
+    initAmbientLoopVideos();
+  }
+
+  // 兼容博客现有的 Swup 页面切换。
+  document.addEventListener("swup:contentReplaced", initAmbientLoopVideos);
+  document.addEventListener("swup:page:view", initAmbientLoopVideos);
+
+  const swupWindow = window as any;
+  if (swupWindow.swup?.hooks && !swupWindow.__ambientLoopVideoSwupBound) {
+    swupWindow.__ambientLoopVideoSwupBound = true;
+    swupWindow.swup.hooks.on("content:replace", () => {
+      window.setTimeout(initAmbientLoopVideos, 40);
+    });
+  }
+</script>
+
+<style is:global>
+  .ambient-loop-video {
+    --av-cyan: 176 229 255;
+    --av-blue: 156 188 255;
+    --av-lilac: 201 181 255;
+    --av-pink: 255 196 228;
+
+    position: relative;
+    width: min(100%, var(--video-max-width));
+    margin: 1.25rem auto;
+    isolation: isolate;
+  }
+
+  .ambient-loop-video__surface {
+    --tap-x: 50%;
+    --tap-y: 50%;
+
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: var(--video-ratio);
+    padding: 6px;
+    overflow: hidden;
+    border: 0;
+    border-radius: calc(var(--video-radius) + 6px);
+    background:
+      linear-gradient(145deg, rgb(255 255 255 / 0.14), rgb(255 255 255 / 0.035)),
+      radial-gradient(circle at 15% 0%, rgb(var(--av-cyan) / 0.11), transparent 42%),
+      radial-gradient(circle at 100% 100%, rgb(var(--av-pink) / 0.09), transparent 40%);
+    box-shadow:
+      0 16px 42px rgb(16 20 42 / 0.13),
+      inset 0 0 0 1px rgb(255 255 255 / 0.21),
+      inset 0 0 26px rgb(var(--av-blue) / 0.04);
+    backdrop-filter: blur(14px) saturate(1.15);
+    -webkit-backdrop-filter: blur(14px) saturate(1.15);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .ambient-loop-video__surface::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+      115deg,
+      rgb(var(--av-cyan) / 0.54),
+      rgb(255 255 255 / 0.13) 31%,
+      rgb(var(--av-lilac) / 0.34) 61%,
+      rgb(var(--av-pink) / 0.44)
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  .ambient-loop-video__surface::after {
+    content: "";
+    position: absolute;
+    z-index: 9;
+    left: var(--tap-x);
+    top: var(--tap-y);
+    width: 22px;
+    height: 22px;
+    border: 1px solid rgb(var(--av-cyan) / 0.7);
+    border-radius: 50%;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(0.25);
+    box-shadow:
+      0 0 18px rgb(var(--av-cyan) / 0.38),
+      inset 0 0 12px rgb(var(--av-pink) / 0.22);
+  }
+
+  .ambient-loop-video.tap-flash .ambient-loop-video__surface::after {
+    animation: ambient-video-tap 0.5s ease-out forwards;
+  }
+
+  .ambient-loop-video__glass {
+    position: absolute;
+    z-index: 1;
+    inset: 6px;
+    border-radius: var(--video-radius);
+    pointer-events: none;
+    box-shadow:
+      inset 0 0 0 1px rgb(255 255 255 / 0.16),
+      inset 0 -20px 34px rgb(10 13 30 / 0.04);
+  }
+
+  .ambient-loop-video__media {
+    position: relative;
+    z-index: 2;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--video-radius);
+    object-fit: cover;
+    background: transparent;
+    user-select: none;
+    pointer-events: none;
+    transition:
+      filter 0.35s ease,
+      transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .ambient-loop-video__surface:hover .ambient-loop-video__media {
+    filter: saturate(1.03) brightness(1.015);
+    transform: scale(1.003);
+  }
+
+  .ambient-loop-video.is-paused .ambient-loop-video__media {
+    filter: saturate(0.84) brightness(0.84);
+  }
+
+  .ambient-loop-video__sheen {
+    position: absolute;
+    z-index: 4;
+    top: 6px;
+    bottom: 6px;
+    left: -28%;
+    width: 18%;
+    border-radius: 999px;
+    pointer-events: none;
+    opacity: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.18),
+      rgb(var(--av-cyan) / 0.12),
+      transparent
+    );
+    filter: blur(6px);
+    transform: skewX(-15deg);
+    mix-blend-mode: screen;
+    animation: ambient-video-sheen 8.5s ease-in-out 1.7s infinite;
+  }
+
+  .ambient-loop-video__badge {
+    position: absolute;
+    z-index: 5;
+    top: 17px;
+    left: 17px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px;
+    border: 1px solid rgb(255 255 255 / 0.25);
+    border-radius: 999px;
+    color: rgb(255 255 255 / 0.88);
+    background: rgb(21 24 47 / 0.24);
+    box-shadow: 0 7px 22px rgb(9 12 28 / 0.1);
+    backdrop-filter: blur(9px);
+    -webkit-backdrop-filter: blur(9px);
+    font-size: 9px;
+    font-weight: 650;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+
+  .ambient-loop-video__badge i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: rgb(var(--av-cyan) / 0.92);
+    box-shadow: 0 0 9px rgb(var(--av-cyan) / 0.76);
+    animation: ambient-video-pulse 1.8s ease-in-out infinite;
+  }
+
+  .ambient-loop-video__badge b {
+    color: rgb(var(--av-pink) / 0.86);
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .ambient-loop-video.is-paused .ambient-loop-video__badge {
+    opacity: 0.36;
+  }
+
+  .ambient-loop-video__hint {
+    position: absolute;
+    z-index: 5;
+    right: 18px;
+    bottom: 16px;
+    padding: 4px 7px;
+    color: rgb(255 255 255 / 0.64);
+    background: rgb(15 18 38 / 0.16);
+    border-radius: 7px;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    font-size: 8px;
+    line-height: 1;
+    letter-spacing: 0.13em;
+    opacity: 0;
+    transform: translateY(4px);
+    transition:
+      opacity 0.25s ease,
+      transform 0.25s ease;
+    pointer-events: none;
+  }
+
+  .ambient-loop-video__surface:hover .ambient-loop-video__hint {
+    opacity: 0.72;
+    transform: translateY(0);
+  }
+
+  .ambient-loop-video__state {
+    position: absolute;
+    z-index: 6;
+    left: 50%;
+    top: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 9px;
+    color: rgb(255 255 255 / 0.94);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(0.86);
+  }
+
+  .ambient-loop-video__state-icon {
+    position: relative;
+    width: 46px;
+    height: 46px;
+    border: 1px solid rgb(255 255 255 / 0.44);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle, rgb(var(--av-cyan) / 0.14), rgb(24 27 54 / 0.28));
+    box-shadow:
+      0 0 28px rgb(var(--av-cyan) / 0.18),
+      inset 0 0 18px rgb(255 255 255 / 0.06);
+    backdrop-filter: blur(9px);
+    -webkit-backdrop-filter: blur(9px);
+  }
+
+  .ambient-loop-video__state-icon::before,
+  .ambient-loop-video__state-icon::after {
+    content: "";
+    position: absolute;
+    top: 14px;
+    width: 4px;
+    height: 18px;
+    border-radius: 3px;
+    background: rgb(255 255 255 / 0.9);
+  }
+
+  .ambient-loop-video__state-icon::before {
+    left: 16px;
+  }
+
+  .ambient-loop-video__state-icon::after {
+    right: 16px;
+  }
+
+  .ambient-loop-video.is-paused .ambient-loop-video__state-icon::before {
+    left: 18px;
+    top: 13px;
+    width: 0;
+    height: 0;
+    border-top: 10px solid transparent;
+    border-bottom: 10px solid transparent;
+    border-left: 15px solid rgb(255 255 255 / 0.92);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .ambient-loop-video.is-paused .ambient-loop-video__state-icon::after {
+    display: none;
+  }
+
+  .ambient-loop-video__state-text {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-shadow: 0 2px 10px rgb(12 14 32 / 0.55);
+  }
+
+  .ambient-loop-video.is-paused .ambient-loop-video__state {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  .ambient-loop-video.show-state:not(.is-paused) .ambient-loop-video__state {
+    animation: ambient-video-feedback 0.68s ease-out both;
+  }
+
+  .ambient-loop-video__corner {
+    position: absolute;
+    z-index: 5;
+    width: 23px;
+    height: 23px;
+    pointer-events: none;
+    opacity: 0.68;
+  }
+
+  .ambient-loop-video__corner--tl {
+    top: 11px;
+    left: 11px;
+    border-top: 1px solid rgb(var(--av-cyan) / 0.78);
+    border-left: 1px solid rgb(var(--av-cyan) / 0.78);
+    border-radius: 5px 0 0 0;
+  }
+
+  .ambient-loop-video__corner--br {
+    right: 11px;
+    bottom: 11px;
+    border-right: 1px solid rgb(var(--av-pink) / 0.65);
+    border-bottom: 1px solid rgb(var(--av-pink) / 0.65);
+    border-radius: 0 0 5px 0;
+  }
+
+  @keyframes ambient-video-sheen {
+    0%,
+    73% {
+      left: -28%;
+      opacity: 0;
+    }
+    79% {
+      opacity: 0.52;
+    }
+    94% {
+      left: 112%;
+      opacity: 0;
+    }
+    100% {
+      left: 112%;
+      opacity: 0;
+    }
+  }
+
+  @keyframes ambient-video-pulse {
+    0%, 100% {
+      opacity: 0.42;
+      transform: scale(0.78);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.05);
+    }
+  }
+
+  @keyframes ambient-video-tap {
+    0% {
+      opacity: 0.8;
+      transform: translate(-50%, -50%) scale(0.3);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(5.6);
+    }
+  }
+
+  @keyframes ambient-video-feedback {
+    0% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.75);
+    }
+    24% {
+      opacity: 0.9;
+      transform: translate(-50%, -50%) scale(1.04);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(1);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .ambient-loop-video {
+      margin: 0.9rem auto;
+    }
+
+    .ambient-loop-video__surface {
+      padding: 4px;
+      border-radius: calc(var(--video-radius) + 3px);
+    }
+
+    .ambient-loop-video__glass {
+      inset: 4px;
+    }
+
+    .ambient-loop-video__badge {
+      top: 12px;
+      left: 12px;
+      padding: 4px 7px;
+      font-size: 8px;
+    }
+
+    .ambient-loop-video__hint {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ambient-loop-video__sheen,
+    .ambient-loop-video__badge i {
+      animation: none !important;
+    }
+  }
+</style>

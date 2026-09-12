@@ -1,5 +1,6 @@
 ---
 import type { GetStaticPaths } from "astro";
+import AmbientLoopVideo from "@/components/common/AmbientLoopVideo.astro";
 import Pagination from "@/components/common/Pagination.astro";
 import PostPage from "@/components/layout/PostPage.astro";
 import { siteConfig } from "@/config";
@@ -19,6 +20,12 @@ const len = page.data.length;
 ---
 
 <MainGridLayout>
+  <AmbientLoopVideo
+    src="/assets/videos/card-movie.mp4"
+    poster="/assets/images/d1.webp"
+    alt="首页循环视频"
+    aspectRatio="16 / 9"
+  />
   <PostPage page={page} />
   {
     page.total > page.size && (
